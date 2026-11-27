@@ -1,3 +1,4 @@
+
 name: Compilar APK
 
 on:
@@ -13,37 +14,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # 1. Obter o projeto
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v5
+      # 2. Instalar Java
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      # 3. Instalar Android SDK (CORREÇÃO PRINCIPAL)
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      # 4. Configurar Gradle
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Aceitar licenças e instalar SDK
+      # 5. Confirmar ferramentas
+      - name: Verificar Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          which sdkmanager
+          sdkmanager --version
 
+      # 6. Descompactar projeto
       - name: Descompactar projeto
         run: |
           mkdir -p build_src
           unzip -o Toque_2_0_NFC.zip -d build_src
 
+      # 7. Verificar estrutura
+      - name: Verificar projeto
+        run: |
+          ls -la build_src
+          test -f build_src/settings.gradle.kts
+          test -f build_src/app/build.gradle.kts
+
+      # 8. Compilar APK
       - name: Compilar
         working-directory: build_src
         run: gradle assembleDebug --no-daemon
 
+      # 9. Publicar APK
       - name: Publicar APK numa release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp build_src/app/build/outputs/apk/debug/app-debug.apk Toque.apk
+
           gh release create "v2.0-${{ github.run_number }}" Toque.apk \
-            --title "Toque build ${{ github.run_number }}" \
+            --title "Toque 2.0 build ${{ github.run_number }}" \
             --notes "APK de teste — Toque 2.0 NFC" \
             --prerelease
