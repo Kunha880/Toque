@@ -1,4 +1,3 @@
-
 name: Compilar APK
 
 on:
@@ -14,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Obter o projeto
+      # 1. Obter o repositorio
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -25,7 +24,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 3. Instalar Android SDK (CORREÇÃO PRINCIPAL)
+      # 3. Instalar Android SDK
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -44,32 +43,64 @@ jobs:
           which sdkmanager
           sdkmanager --version
 
-      # 6. Descompactar projeto
+      # 6. Escolher e descompactar o ZIP mais recente (Toque_*.zip)
+      #    Nao e preciso editar este ficheiro quando sai uma versao nova:
+      #    basta carregar o ZIP novo (ex.: Toque_3_0_Chat.zip) para o repositorio.
       - name: Descompactar projeto
         run: |
+          ls -la
+          ZIP=$(ls Toque_*.zip 2>/dev/null | sort -V | tail -1)
+          if [ -z "$ZIP" ]; then
+            echo "ERRO: nao existe nenhum ficheiro Toque_*.zip na raiz do repositorio."
+            exit 1
+          fi
+          echo "A usar: $ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          rm -rf build_src
           mkdir -p build_src
-          unzip -o Toque_2_0_NFC.zip -d build_src
+          unzip -o "$ZIP" -d build_src
 
-      # 7. Verificar estrutura
+      # 7. Encontrar a pasta do projeto (raiz do ZIP ou uma subpasta)
       - name: Verificar projeto
         run: |
-          ls -la build_src
-          test -f build_src/settings.gradle.kts
-          test -f build_src/app/build.gradle.kts
+          if [ -f build_src/settings.gradle.kts ]; then
+            DIR=build_src
+          else
+            FOUND=$(find build_src -maxdepth 2 -name settings.gradle.kts | head -1)
+            if [ -z "$FOUND" ]; then
+              echo "ERRO: settings.gradle.kts nao encontrado dentro do ZIP."
+              exit 1
+            fi
+            DIR=$(dirname "$FOUND")
+          fi
+          echo "Projeto em: $DIR"
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+          ls -la "$DIR"
+          test -f "$DIR/settings.gradle.kts"
+          test -f "$DIR/app/build.gradle.kts"
 
       # 8. Compilar APK
       - name: Compilar
-        working-directory: build_src
-        run: gradle assembleDebug --no-daemon
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
 
-      # 9. Publicar APK
+      # 9. Guardar o APK tambem como artefacto (copia de seguranca)
+      - name: Guardar APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: toque-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      # 10. Publicar APK numa release
       - name: Publicar APK numa release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp build_src/app/build/outputs/apk/debug/app-debug.apk Toque.apk
-
-          gh release create "v2.0-${{ github.run_number }}" Toque.apk \
-            --title "Toque 2.0 build ${{ github.run_number }}" \
-            --notes "APK de teste — Toque 2.0 NFC" \
+          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" Toque.apk
+          NAME="${ZIP%.zip}"
+          gh release create "build-${{ github.run_number }}" Toque.apk \
+            --title "$NAME (build ${{ github.run_number }})" \
+            --notes "APK de teste gerado a partir de $ZIP" \
             --prerelease
